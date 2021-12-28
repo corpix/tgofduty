@@ -36,10 +36,6 @@ help: # print defined targets and their comments
 
 ### releases
 
-.PHONY: build
-build: # build project
-	echo not implemented
-
 ## env
 
 .PHONY: run/shell
@@ -55,6 +51,10 @@ run/nix/repl: # run nix repl for nixpkgs from env
 	nix repl '<nixpkgs>'
 
 ## dev session
+
+.PHONY: run
+run: # run application
+	poetry run python ./main.py
 
 .PHONY: run/tmux/session
 run/tmux/session: # start development environment
@@ -81,5 +81,4 @@ run/tmux/kill: # kill development environment
 .PHONY: clean
 clean:: # clean state
 	rm -rf result*
-	rm -rf build main
 	rm -rf .cache/* .local/* .config/* || true
