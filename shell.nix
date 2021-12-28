@@ -1,4 +1,4 @@
-let nixpkgs = ./nix/nixpkgs.nix;
+let nixpkgs = import ./nix/nixpkgs.nix;
     config = {};
 in with import nixpkgs { inherit config; }; let
   shellWrapper = writeScript "shell-wrapper" ''
@@ -23,7 +23,7 @@ in stdenv.mkDerivation rec {
     glibcLocales bashInteractive man
     nix cacert curl utillinux coreutils
     git jq yq-go tmux findutils gnumake
-    python3 poetry
+    python3 poetry python-language-server
   ];
   shellHook = ''
     export root=$(pwd)
@@ -35,6 +35,7 @@ in stdenv.mkDerivation rec {
 
     export LANG="en_US.UTF-8"
     export NIX_PATH="nixpkgs=${nixpkgs}"
+    export PYTHONPATH="$(poetry env info -p)"/lib/python3.9/site-packages/
 
     if [ ! -z "$PS1" ]
     then
