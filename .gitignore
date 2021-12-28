@@ -1,0 +1,6 @@
+.personal.*
+/.env
+/.cache/*
+/.config/*
+/.local/*
+/.tmux
