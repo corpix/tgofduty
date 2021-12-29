@@ -2,8 +2,8 @@ from os import getenv
 import datetime
 import logging
 
-from telegram import Update
-from telegram.ext import Updater, Filters, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, Filters, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, PicklePersistence
 from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP as CalendarStep
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, create_engine as open_db
@@ -21,8 +21,8 @@ class Project(Base):
     name = Column(String)
     telegram_id = Column(Integer)
 
-class Sentry(Base):
-    __tablename__ = "sentry"
+class DuttyAssignee(Base):
+    __tablename__ = "duty_assignee"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer)
 
@@ -30,7 +30,7 @@ class Duty(Base):
     __tablename__ = "duty"
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("project.id"))
-    sentry_id = Column(Integer, ForeignKey("sentry.id"))
+    assignee_id = Column(Integer, ForeignKey("duty_assignee.id"))
     starts_at = Column(DateTime)
     ends_at = Column(DateTime)
 
@@ -45,12 +45,14 @@ logging.basicConfig(
 
 def main():
     token = getenv("TOKEN")
-    updater = Updater(token=token)
+    state = getenv("STATE") or "state.pickle"
+    persistence = PicklePersistence(filename=state)
+    updater = Updater(token=token, persistence=persistence)
     dispatcher = updater.dispatcher
 
     ##
 
-    db_url = getenv("DATABASE") or "sqlite:///state.db"
+    db_url = getenv("DATABASE") or "sqlite:///duty.db"
     db = open_db(db_url)
     db_conn = db.connect()
     db_session = open_db_session(bind=db)
@@ -69,6 +71,8 @@ def main():
 
     ##
 
+    KEY_ASSIGN = 1
+
     def help(update: Update, context: CallbackContext):
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -86,6 +90,7 @@ def main():
         help(update, context)
 
     def assign(update: Update, context: CallbackContext):
+        context.user_data[KEY_ASSIGN] = {}
         calendar, step = make_calendar().build()
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -93,29 +98,79 @@ def main():
             reply_markup=calendar
         )
 
+    def done(update: Update, context: CallbackContext):
+        if KEY_ASSIGN in context.user_data:
+            duty = context.user_data[KEY_ASSIGN]
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=repr(duty)
+            )
+
+    def message(update: Update, context: CallbackContext):
+        if KEY_ASSIGN in context.user_data:
+            duty = context.user_data[KEY_ASSIGN]
+            if "assignee" not in duty:
+                duty["assignee"] = []
+            assignees = update.message.text.strip().split(" ")
+            duty["assignee"].extend(assignees)
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="\n".join([
+                    f"Назначил на дежурство {', '.join(assignees)}.",
+                    f"Даты начала и конца дежурства: {duty['starts_at']} - {duty['ends_at']}",
+                ])
+            )
+
     def callback(update: Update, context: CallbackContext):
         query = update.callback_query
 
-        result, key, step = make_calendar().process(query.data)
-        if not result and key:
-            context.bot.edit_message_text(
-                CalendarStep[step],
-                chat_id=update.effective_chat.id,
-                message_id=update.effective_message.message_id,
-                reply_markup=key
-            )
-        elif result:
-            context.bot.edit_message_text(
-                f"Дата начала дежурства {result}",
-                chat_id=update.effective_chat.id,
-                message_id=update.effective_message.message_id,
-            )
-            calendar, step = make_calendar().build()
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Укажи дату конца дежурства",
-                reply_markup=calendar
-            )
+        if KEY_ASSIGN in context.user_data:
+            duty = context.user_data[KEY_ASSIGN]
+
+            if "starts_at" not in duty or "ends_at" not in duty:
+                result, key, step = make_calendar().process(query.data)
+                if not result and key:
+                    context.bot.edit_message_text(
+                        CalendarStep[step],
+                        chat_id=update.effective_chat.id,
+                        message_id=update.effective_message.message_id,
+                        reply_markup=key
+                    )
+                    return
+
+                if result:
+                    if "starts_at" not in duty:
+                        context.bot.edit_message_text(
+                            f"Дата начала дежурства {result}",
+                            chat_id=update.effective_chat.id,
+                            message_id=update.effective_message.message_id,
+                        )
+                        duty["starts_at"] = result
+
+                        calendar, step = make_calendar().build()
+                        context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text="Укажи дату конца дежурства",
+                            reply_markup=calendar
+                        )
+                        return
+                    if "ends_at" not in duty:
+                        context.bot.edit_message_text(
+                            f"Дата конца дежурства {result}",
+                            chat_id=update.effective_chat.id,
+                            message_id=update.effective_message.message_id,
+                        )
+                        duty["ends_at"] = result
+                        context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text="\n".join([
+                                "Укажи дежурных через @user.",
+                                "Когда закончишь перечислять напиши /done",
+                            ])
+                        )
+                        return
+                    return
+                return
 
     ##
 
@@ -123,8 +178,9 @@ def main():
         (CommandHandler, "start", start,),
         (CommandHandler, "help", help,),
         (CommandHandler, "assign", assign,),
+        (CommandHandler, "done", done,),
+        (MessageHandler, Filters.text & (~Filters.command), message,),
         (CallbackQueryHandler, callback)
-        #(MessageHandler, Filters.text & (~Filters.command), echo,),
     ]
 
     for handler in handlers:
