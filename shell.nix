@@ -24,6 +24,7 @@ in stdenv.mkDerivation rec {
     nix cacert curl utillinux coreutils
     git jq yq-go tmux findutils gnumake
     python3 poetry python-language-server
+    sqlite
   ];
   shellHook = ''
     export root=$(pwd)
